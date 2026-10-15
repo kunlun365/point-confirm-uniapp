@@ -7,9 +7,9 @@
     <!-- 顶部统计悬浮 -->
     <view class="top">
       总数: {{ total }} |
-      已确认: {{ confirmed }} |
-      待确认: {{ pending }} |
-      可疑点: {{ yes }}
+      已探索: {{ confirmed }} |
+      待探索: {{ pending }} |
+      种草: {{ yes }}
     </view>
 
     <!-- 点位详情弹层 -->
