@@ -6,10 +6,17 @@
 
     <!-- 顶部统计悬浮 -->
     <view class="top">
-      总数: {{ total }} |
-      已探索: {{ confirmed }} |
-      待探索: {{ pending }} |
-      种草: {{ yes }}
+      <view>总数: {{ total }} | 已探索: {{ confirmed }} | 待探索: {{ pending }}</view>
+      <view class="top-legend">
+        <view class="legend-item">
+          <image class="legend-icon" src="/static/yes.png" mode="aspectFit" />
+          <text>{{ yes }}</text>
+        </view>
+        <view class="legend-item">
+          <image class="legend-icon" src="/static/no.png" mode="aspectFit" />
+          <text>{{ no }}</text>
+        </view>
+      </view>
     </view>
 
     <!-- 点位详情弹层 -->
@@ -114,7 +121,8 @@ export default {
     total() { return this.points.length },
     confirmed() { return this.points.filter(p => p.status !== 0).length },
     pending() { return this.points.filter(p => p.status === 0).length },
-    yes() { return this.points.filter(p => p.status === 1).length }
+    yes() { return this.points.filter(p => p.status === 1).length },
+    no() { return this.points.filter(p => p.status === 2).length }
   },
   onLoad() {
     this.connectWebSocket()
@@ -268,9 +276,30 @@ export default {
   border-radius: 7px;
   font-size: 14px;
   line-height: 1.5;
-  white-space: nowrap;
+  white-space: normal;
+  text-align: center;
   z-index: 999;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.top-legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 2px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.legend-icon {
+  width: 1.3em;
+  height: 1.2em;
+  vertical-align: middle;
 }
 
 .panel-mask {
