@@ -371,7 +371,8 @@ export default {
 @media screen and (max-width: 480px) {
   .top {
     top: 12px;
-    max-width: calc(100vw - 16px);
+    max-width: none;
+    width: calc(100vw - 160px);
     padding: 4px 7px;
     font-size: 12px;
   }
