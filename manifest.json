@@ -75,6 +75,10 @@
                     "serviceHost" : ""
                 }
             }
-        }
+        },
+        "title" : "足迹"
+    },
+    "uniStatistics" : {
+        "enable" : false
     }
 }

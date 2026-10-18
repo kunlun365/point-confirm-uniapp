@@ -16,14 +16,18 @@
           <image class="legend-icon" src="/static/no.png" mode="aspectFit" />
           <text>{{ no }}</text>
         </view>
+        <view class="legend-item">
+          <image class="legend-icon" src="/static/unknown.png" mode="aspectFit" />
+          <text>{{ pending }}</text>
+        </view>
       </view>
     </view>
 
     <!-- 点位详情弹层 -->
-    <view v-if="showPointPanel" class="panel-mask" @click="closePointPanel">
+    <view v-if="showPointPanel" class="panel-mask">
       <view class="panel" @click.stop>
         <view class="panel-title">
-          公园详情
+          {{ selectedPoint.name }}
         </view>
 
         <view class="field">
@@ -31,15 +35,10 @@
           <text>{{ selectedPoint.name }}</text>
         </view>
 
-        <view class="field">
-          <text class="field-label">序号</text>
-          <text>{{ selectedPoint.serial_no }}</text>
-        </view>
-
-        <view class="field">
+        <!-- <view class="field">
           <text class="field-label">编码</text>
           <text>{{ selectedPoint.code }}</text>
-        </view>
+        </view> -->
 
         <view class="field">
           <text class="field-label">管理模式</text>
@@ -56,43 +55,52 @@
           <text>{{ selectedPoint.district }}</text>
         </view>
 
-        <!-- <view class="field">
-          <text class="field-label">省份</text>
-          <text>{{ selectedPoint.province }}</text>
-        </view>
-
         <view class="field">
-          <text class="field-label">城市</text>
-          <text>{{ selectedPoint.city }}</text>
-        </view> -->
+          <text class="field-label">评分</text>
+          <view class="rating">
+            <view class="rating-stars">
+              <image v-for="i in 5" :key="'e' + i" class="star-img" src="/static/heart-empty.png" mode="aspectFit" />
+              <view class="rating-fill" :style="{ width: ratingPercent }">
+                <image v-for="i in 5" :key="'f' + i" class="star-img" src="/static/heart-full.png" mode="aspectFit" />
+              </view>
+            </view>
+            <text class="rating-value">{{ selectedPoint.rating }}</text>
+          </view>
+        </view>
 
         <view class="field">
           <text class="field-label">地址</text>
-          <text>{{ selectedPoint.formatted_address }}</text>
+          <text>{{ selectedPoint.city }}{{ selectedPoint.district }}{{ selectedPoint.address }}</text>
+        </view>
+
+        <!-- <view class="field">
+          <text class="field-label">坐标</text>
+          <text>{{ selectedPoint.lng }},{{ selectedPoint.lat }}</text>
+        </view> -->
+
+        <view class="field">
+          <text class="field-label">电话</text>
+          <text>{{ selectedPoint.tel }}</text>
         </view>
 
         <view class="field">
-          <text class="field-label">经度</text>
-          <text>{{ selectedPoint.lng }}</text>
+          <text class="field-label">营业时间</text>
+          <text>{{ selectedPoint.opentime2 }}</text>
         </view>
 
         <view class="field">
-          <text class="field-label">纬度</text>
-          <text>{{ selectedPoint.lat }}</text>
-        </view>
-
-        <view class="field">
-          <text class="field-label">确认状态</text>
-          <text>
-            {{ selectedPoint.status === 0 ? '? 待探索' : selectedPoint.status === 1 ? '√ 种草' : '× 避雷' }}
-          </text>
+          <text class="field-label">状态</text>
+          <view class="status">
+            <image class="status-icon" :src="statusIcon" mode="aspectFit" />
+            <text>{{ statusText }}</text>
+          </view>
         </view>
 
         <view class="panel-actions">
-          <button v-if="selectedPoint.status === 0" type="warn" @click="confirmPoint(1)">
+          <button v-if="selectedPoint.status === 0" type="primary" @click="confirmPoint(1)">
             种草
           </button>
-          <button v-if="selectedPoint.status === 0" type="primary" @click="confirmPoint(2)">
+          <button v-if="selectedPoint.status === 0" type="warn" @click="confirmPoint(2)">
             避雷
           </button>
           <button @click="closePointPanel">
@@ -111,10 +119,17 @@ export default {
       ws: null,
       points: [], // 全部点位
       markers: [], // 地图 marker
-      centerLat: 22.54,   // 默认地图中心纬度
-      centerLng: 114.05,   // 默认地图中心经度
+      centerLat: 22.518968,   // 默认地图中心纬度
+      centerLng: 113.972602,   // 默认地图中心经度
       showPointPanel: false,
-      selectedPoint: null
+      selectedPoint: null,
+      heartbeatTimer: null, // 重连/心跳保活
+      reconnectTimer: null,
+      reconnectDelay: 2000,
+      lastMsgTime: Date.now(),
+      isPageVisible: true, // 避免僵尸死连接
+      connectId: 0,
+      sending: false // 防快速确认重复提交
     }
   },
   computed: {
@@ -122,41 +137,117 @@ export default {
     confirmed() { return this.points.filter(p => p.status !== 0).length },
     pending() { return this.points.filter(p => p.status === 0).length },
     yes() { return this.points.filter(p => p.status === 1).length },
-    no() { return this.points.filter(p => p.status === 2).length }
+    no() { return this.points.filter(p => p.status === 2).length },
+    ratingPercent() {
+      const r = Number(this.selectedPoint?.rating) || 0
+      return Math.max(0, Math.min(1, r / 5)) * 100 + '%'
+    },
+    statusIcon() {
+      const s = this.selectedPoint?.status
+      if (s === 1) return '/static/yes.png'
+      if (s === 2) return '/static/no.png'
+      return '/static/unknown.png'
+    },
+    statusText() {
+      const s = this.selectedPoint?.status
+      if (s === 0) return '待探索'
+      if (s === 1) return '种草'
+      if (s === 2) return '避雷'
+      return '未知'
+    }
   },
   onLoad() {
     this.connectWebSocket()
   },
+  onHide() {
+    this.isPageVisible = false
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null
+    }
+    if (this.ws && (this.ws.readyState === 0 || this.ws.readyState === 1)) {
+      const old = this.ws
+      this.ws = null
+      this.connectId++ // 让旧连接所有回调失效
+      try { old.close({}) } catch (e) { } // 不在前台运行时主动关闭，减少移动设备耗电，服务端同步释放连接
+    }
+  },
+  onShow() {
+    this.isPageVisible = true
+    const state = this.ws && this.ws.readyState // 0连接中 1已连接 2关闭中 3已关闭
+    if (state !== 0 && state !== 1) {
+      this.connectWebSocket() // 切回前台重连
+    }
+  },
+  onUnload() {
+    this.isPageVisible = false
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null }
+    if (this.ws) {
+      const old = this.ws
+      this.ws = null
+      this.connectId++
+      try { old.close({}) } catch (e) { }
+    }
+  },
   methods: {
     connectWebSocket() {
-      this.ws = uni.connectSocket({
-        url: 'ws://192.168.100.7:8080/ws/point',
+      // 清理旧定时器
+      if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null
+      }
+
+      // 递增连接编号，用于判断"这条回调是否属于当前这次连接"
+      const myId = ++this.connectId
+
+      // 关掉旧连接并解除它的回调影响
+      if (this.ws) {
+        const old = this.ws
+        this.ws = null
+        try { old.close({}) } catch (e) { }
+      }
+
+      let wsUrl
+      // #ifdef H5
+      wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/point`
+      // #endif
+      // #ifndef H5
+      wsUrl = 'wss://gis.kunlun365.us.ci/ws/point'
+      // #endif
+      const ws = uni.connectSocket({
+        url: wsUrl,
         success: () => console.log("WebSocket连接中...")
       })
+      this.ws = ws // this.wx是Proxy，和ws不等
 
-      this.ws.onOpen(() => {
+      ws.onOpen(() => {
+        if (myId !== this.connectId) return
         console.log("WebSocket已连接")
+        // 启动心跳并重置退避
+        this.reconnectDelay = 2000
+        this.startHeartbeat()
       })
 
-      this.ws.onMessage(res => {
-        const msg = JSON.parse(res.data)
+      ws.onMessage(res => {
+        if (myId !== this.connectId) return // 旧连接的迟到消息直接丢弃
+        this.lastMsgTime = Date.now() // 收到任何消息(含PONG、广播)都算连接活着
+        let msg
+        try { msg = JSON.parse(res.data) } catch (e) { return }
         if (Array.isArray(msg)) {
           // 全量初始化点位
           this.points = msg
           this.updateMarkers()
-          // 自动把地图中心设为第一个点
-          if (msg.length > 0) {
-            this.centerLat = 22.523896
-            this.centerLng = 113.967667
-          }
         } else if (msg.type === 'UPDATE') {
           // 单点更新
-          const p = this.points.find(p => p.serial_no === msg.pointId)
+          const p = this.points.find(p => p.id === msg.pointId)
           if (p) p.status = msg.status
 
           // 如果详情弹层正显示这个点，同步更新状态。
           // 这样其他用户确认点位后，当前页面的地图、统计和详情状态都会更新。
-          if (this.selectedPoint && String(this.selectedPoint.serial_no) === String(msg.pointId)) {
+          if (this.selectedPoint && this.selectedPoint.id === msg.pointId) {
             this.selectedPoint.status = Number(msg.status)
           }
 
@@ -165,12 +256,44 @@ export default {
       })
 
       this.ws.onError(e => {
+        if (myId !== this.connectId) return // 旧连接异常直接丢弃，防止重连风暴
         console.error("WebSocket错误", e)
+        this.scheduleReconnect()
       })
 
       this.ws.onClose(() => {
-        console.log("WebSocket关闭")
+        if (myId !== this.connectId) return // 旧连接关闭，不触发重连
+        console.log("WebSocket关闭，准备重连")
+        if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+        this.scheduleReconnect()
       })
+    },
+
+    startHeartbeat() {
+      this.lastMsgTime = Date.now()
+      this.heartbeatTimer = setInterval(() => {
+        if (this.ws && this.ws.readyState === 1) {
+          this.ws.send({ data: JSON.stringify({ type: 'PING' }) })
+        }
+        // 70s 没收到任何消息，视为半开死链，主动关闭以触发onClose重连
+        if (this.ws && Date.now() - this.lastMsgTime > 70000) {
+          this.ws.close({})
+        }
+      }, 25000) // 25s 对移动电信运营商NAT足够保守
+    },
+
+    scheduleReconnect() {
+      if (!this.isPageVisible) return // 切换后台不重连，等onShow
+      if (this.reconnectTimer) return // 已排队，不重复
+      if (this.ws && this.ws.readyState === 1) return // 已连上，不必重连
+
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null
+        this.connectWebSocket()
+      }, this.reconnectDelay)
+
+      // 2s→4s→8s→15s 封顶
+      this.reconnectDelay = Math.min(this.reconnectDelay * 2, 15000)
     },
 
     updateMarkers() {
@@ -179,15 +302,12 @@ export default {
         id: index,  // markerId 用前端连续整数
         latitude: Number(p.lat),
         longitude: Number(p.lng),
-        iconPath:
-          p.status === 0 ? '/static/red.png' :
-            p.status === 1 ? '/static/yes.png' :
-              '/static/no.png',
+        iconPath: p.status === 0 ? '/static/red.png' : p.status === 1 ? '/static/yes.png' : '/static/no.png',
         width: 24,   // 可以考虑增大点击范围便于H5模拟器调试
         height: 24,
-        pointId: p.serial_no,  // 保存真实后端点位 id
+        pointId: p.id,  // 保存真实后端点位 id
         label: {
-          content: p.serial_no.toString(),
+          content: p.id.toString(),
           color: '#000000',
           fontSize: 14,
           anchorX: -0.2,
@@ -210,19 +330,18 @@ export default {
       if (!marker && lat && lng) {
         console.log("marker点击事件触发-最近点经度", lat, "纬度", lng)
         let minD = Infinity
+        let hit = null
         this.points.forEach(p => {
-          const d = Math.abs(p.lat - lat) + Math.abs(p.lng - lng)
-          if (d < minD) {
-            minD = d
-            marker = { pointId: p.serial_no }
-          }
+          const d = Math.abs(Number(p.lat) - lat) + Math.abs(Number(p.lng) - lng)
+          if (d < minD) { minD = d; hit = p }
         })
+        if (hit && minD < 0.01) marker = { pointId: hit.id } // 约 1km，按需调
       }
 
       if (!marker) return
 
       const id = marker.pointId           // 取真实点位 id
-      const p = this.points.find(p => p.serial_no === id)
+      const p = this.points.find(p => p.id === id)
       if (!p) return
 
       console.log("找到的点:", p)
@@ -232,15 +351,18 @@ export default {
     },
 
     confirmPoint(status) {
-      if (!this.selectedPoint) return
+      if (!this.selectedPoint || this.sending) return
+      this.sending = true
 
-      const id = this.selectedPoint.serial_no
+      const id = this.selectedPoint.id
 
       console.log("种草点位:", id)
       this.sendConfirm(id, status)
 
       // 暂时不直接修改本地点位状态，等待服务端广播 UPDATE 后再更新。
       this.closePointPanel()
+
+      this.$nextTick(() => { this.sending = false })
     },
 
     sendConfirm(id, status) {
@@ -336,7 +458,7 @@ export default {
 .field {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 6px;
   padding: 5px 0;
   border-bottom: 1px solid #eeeeee;
   font-size: 14px;
@@ -348,6 +470,58 @@ export default {
   flex-shrink: 0;
   width: 76px;
   color: #777777;
+}
+
+.rating {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rating-stars {
+  position: relative;
+  display: inline-flex;
+  gap: 2px;
+  line-height: 0;
+}
+
+.star-img {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: block;
+}
+
+.rating-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  overflow: hidden;
+  display: inline-flex;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.rating-value {
+  flex-shrink: 0;
+  color: #333333;
+  font-size: 13px;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.status-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: block;
 }
 
 .panel-actions {
