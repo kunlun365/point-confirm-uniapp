@@ -24,7 +24,7 @@
     </view>
 
     <!-- 点位详情弹层 -->
-    <view v-if="showPointPanel" class="panel-mask">
+    <view v-if="showPointPanel" class="panel-mask" @click="closePointPanel">
       <view class="panel" @click.stop>
         <view class="panel-title">
           {{ selectedPoint.name }}
